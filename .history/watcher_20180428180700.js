@@ -203,9 +203,9 @@ module.exports = function (snooper_options) {
         let start_page = "https://reddit.com/r/" + subreddit + "/new.json"
 
         return new RedditFeedWatcher(start_page, "post", options)
-    } 
+    }
 
-    function getMultiWatcher(username, multi, options) { //test
+    function getMultiWatcher(username, multi, options) {
         username = username.trim().replace("/", "")
         multi = multi.trim().replace("/", "")
         let start_page = "https://reddit.com/user/" + username + "/m/" + multi + "/new.json"
