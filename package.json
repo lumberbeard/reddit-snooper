@@ -4,6 +4,7 @@
   "description": "Simple Reddit bot framework for nodejs",
   "main": "reddit-snooper.js",
   "dependencies": {
+    "random-number": "0.0.9",
     "request": "^2.81.0"
   },
   "devDependencies": {
