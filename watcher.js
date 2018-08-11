@@ -3,7 +3,7 @@
 const request = require("request")
 const EventEmitter = require("events")
 var rn = require('random-number');
-var randomTime = rn.generator({ min:  100000, max: 400000, integer: true});
+var randomTime = rn.generator({ min:  8000, max: 60000, integer: true});
 
 module.exports = function (snooper_options) {
 
@@ -191,9 +191,14 @@ module.exports = function (snooper_options) {
         }
     }
  
-    function getCommentWatcher(subreddit, options) {
+    function getCommentWatcher(subreddit, options, postId) {
         subreddit = subreddit.trim().replace("/", "")
-        let start_page = "https://reddit.com/r/" + subreddit + "/comments.json"
+        let start_page
+        if (postId){
+            start_page = "https://reddit.com/r/" + subreddit + "/comments/" + postID + ".json"
+        } else {
+            start_page = "https://reddit.com/r/" + subreddit + "/comments.json"  
+        }
 
         return new RedditFeedWatcher(start_page, "comment", options)
     }
