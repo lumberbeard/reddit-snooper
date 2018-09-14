@@ -1,22 +1,48 @@
 "use strict"
 
 const request = require("request")
+var Api = require("./api");
+var options = {
+
+  app_id: '3F56OzxrWIL8Sg',
+  api_secret: 'TBNgiWgIDxQlhM2sv6btVYpfbXc',
+  user_agent: 'javascript.getcomments.v1',
+
+  automatic_retries: true, // automatically handles condition when reddit says 'you are doing this too much'
+  api_requests_per_minute: 60 // api requests will be spread out in order to play nicely with Reddit  
+}
+const api = Api(options);
+// snooper = new Snooper({
+//   // credential information is not needed for snooper.watcher
+//   // username: 'reddit_username',
+//   // password: 'reddit password',
+//   app_id: '3F56OzxrWIL8Sg',
+//   api_secret: 'TBNgiWgIDxQlhM2sv6btVYpfbXc',
+//   user_agent: 'javascript.getcomments.v1',
+
+//   automatic_retries: true, // automatically handles condition when reddit says 'you are doing this too much'
+//   api_requests_per_minute: 60 // api requests will be spread out in order to play nicely with Reddit
+// });
 const EventEmitter = require("events")
 var rn = require('random-number');
-var randomTime = rn.generator({ min:  8000, max: 60000, integer: true});
+var randomTime = rn.generator({ min:  1000, max: 200000, integer: true });
+const he = require("he");
+
 
 module.exports = function (snooper_options) {
 
     class RedditWatcher extends EventEmitter {
-        constructor(start_page, item_type, options) {
+        constructor(start_page, item_type, options, category, timeout) {
             super()
-
+            this.category = category
             this.item_type = item_type
             this.options = options
             this.start_page = start_page
             this.is_closed = false
             this.wait_interval = options.wait
             this.retries = 3
+            this.timeout = timeout
+            
 
             this.once("newListener", (event, listener) => {
                 if (event === this.item_type) {
@@ -36,13 +62,14 @@ module.exports = function (snooper_options) {
         }
 
 
-        get_items(start_page, after_name, posts_needed, until_name, cb_first_item, cb) {
-            this._get_items(start_page, after_name, posts_needed, until_name, [], this.retries, cb_first_item, cb)
+        get_items(category, start_page, after_name, posts_needed, until_name, cb_first_item, cb) {
+            this._get_items(category, start_page, after_name, posts_needed, until_name, [], this.retries, cb_first_item, cb)
         }
 
         // calls the callback with a list of items
         // stop when we reach until_need or we get all posts_needed (whichever comes first)
-        _get_items(start_page, after_name, posts_needed, until_name, items, retries, cb_first_item, cb) {
+        _get_items(category, start_page, after_name, posts_needed, until_name, items, retries, cb_first_item, cb) {
+            
             if (this.is_closed) {
                 return
             }
@@ -50,7 +77,7 @@ module.exports = function (snooper_options) {
             request({
                 url: start_page,
                 qs:  {after: after_name}
-            }, (err, res, body_json) => {
+            }, async (err, res, body_json) => {
                 let body
 
                 if (!err) {
@@ -62,11 +89,10 @@ module.exports = function (snooper_options) {
                 }
 
                 if (err && retries > 0) {
-                    return this._get_items(start_page, after_name, posts_needed, until_name, items, retries-1, cb_first_item, cb)
+                    return this._get_items(category, start_page, after_name, posts_needed, until_name, items, retries-1, cb_first_item, cb)
                 } else if (err) {
                     cb(err)
                 }
-
                 let children = body.data.children
 
                 if (children.length > 0) {
@@ -102,6 +128,7 @@ module.exports = function (snooper_options) {
 
                     if (!is_done) {
                         this._get_items(
+                            category,
                             start_page,
                             children[children.length - 1].data.name,
                             posts_needed ? posts_needed - children.length : posts_needed, // leave it null
@@ -111,21 +138,73 @@ module.exports = function (snooper_options) {
                             cb_first_item,
                             cb)
                     } else {
-                        cb(null, items)
-                        this.emit('done')                        
+                        var completedItems = [];
+                        items.map(function (i,index,array) {
+                            // queue = queue.then(async function(res){
+                                api.get("https://www.reddit.com" + i.data.permalink + '.json', null, function(err, responseCode, responseData) {
+                                    let comments = gatherComment(err,responseCode,responseData);
+                                    if (comments){
+                                        i.data.comments = comments;
+                                    }
+                                    completedItems.push(i)
+                                    if (array.length === completedItems.length){
+                                        cb(null, completedItems)
+                                        this.emit('done', start_page, category)
+                                    }
+                                }.bind(this))
+                        }.bind(this))
                     }
 
                 } else {
                     cb('Requested too many items (reddit does not keep this large of a listing)', items)
                 }
+                function gatherComment(err, responseCode,responseData){
+                    var commentChain = []
+                    if (err) {
+                        return console.error("api request failed: " + err)
+                    }
+                    for (let ci of responseData[1].data.children){
+                      let comment = structureComment(ci.data);
+                      if (comment) commentChain.push(comment);
+                  
+                      function structureComment(item){
+                        if (item.replies && item.replies.data.children[0].kind != 'more'){
+                          let replies = item.replies.data.children.map(cir => structureComment(cir.data)).filter(Boolean);
+                          if (replies){
+                            return {
+                                author: item.author,
+                                score: item.score,
+                                body: he(item.body),
+                                replies: replies
+                            }
+                          } else {
+                            return {
+                                author: item.author,
+                                score: item.score,
+                                body: he(item.body),
+                            }
+                          }
+                        } else if(item.author && item.score > 0) {
+                          return {
+                            author: item.author,
+                            score: item.score,
+                            body: he(item.body),
+                          }
+                        }
+                      }
+                    }
+                    return commentChain
+                  }
             })
         }
+        
     }
 
     class RedditListingWatcher extends RedditWatcher {
-        constructor(start_page, item_type, options) {
-            super(start_page, item_type, options)
+        constructor(start_page, item_type, options, category, timeout) {
+            super(start_page, item_type, options, category, timeout)
 
+            this.timeout = timeout;
             this.limit = options.limit || 25
             this.seen_items = []
             this.seen_items_size = this.limit * 5
@@ -136,7 +215,7 @@ module.exports = function (snooper_options) {
                 return
 
             setTimeout(() => {
-                this.get_items(this.start_page, '', this.limit, '', null, (err, data) => {
+                this.get_items(this.category, this.start_page, '', this.limit, '', null, (err, data) => {
                     if (err) return this.emit('error', err)
 
                     let new_data = 0
@@ -145,7 +224,7 @@ module.exports = function (snooper_options) {
                         if (this.seen_items.indexOf(data[i].data.name) < 0) {
                             new_data++
 
-                            this.emit(this.item_type, data[i])
+                            this.emit(this.item_type, data[i], this.category)
 
                             this.seen_items.push(data[i].data.name)
 
@@ -154,9 +233,9 @@ module.exports = function (snooper_options) {
                         }
                     }
 
-                    this.start()
+                    // this.start()
                 })
-            }, randomTime())
+            }, this.timeout)
         }
     }
 
@@ -226,7 +305,7 @@ module.exports = function (snooper_options) {
     // as opposed to feeds which sequentially display new content
 
     // listings: hot, rising, controversial, top_day, top_hour, top_week, top_month, top_year, top_all
-    function getListingWatcher(subreddits, options) {
+    function getListingWatcher(subreddits, options, category, timeout) {
         let subs;
         options.listing = options.listing || 'hot'
         if (Array.isArray(subreddits)){
@@ -244,9 +323,9 @@ module.exports = function (snooper_options) {
         } else {
             throw "invalid listing type"
         }
-
-        console.log(start_page)
-        return new RedditListingWatcher(start_page, 'item', options)
+        console.log(category.name)
+        
+        return new RedditListingWatcher(start_page, 'item', options, category, timeout)
     }
 
     return {
