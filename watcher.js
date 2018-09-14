@@ -26,7 +26,7 @@ const api = Api(options);
 const EventEmitter = require("events")
 var rn = require('random-number');
 var randomTime = rn.generator({ min:  1000, max: 200000, integer: true });
-const he = require("he");
+const he = require("he").decode;
 
 
 module.exports = function (snooper_options) {
